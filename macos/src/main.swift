@@ -63,7 +63,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var isRecording = false
     var settingsWindow: NSWindow?
 
-    let audioFilePath = "/tmp/whisper-dictate.wav"
+    // Use private temp directory with unique filename
+    var audioFilePath: String {
+        let tempDir = NSTemporaryDirectory()
+        return (tempDir as NSString).appendingPathComponent("whisper-dictate-\(ProcessInfo.processInfo.processIdentifier).wav")
+    }
 
     var language: String {
         get { UserDefaults.standard.string(forKey: Defaults.language) ?? "hu" }
@@ -88,6 +92,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkModelExists()
 
         NSLog("WhisperDictate started. Press ⌃⌥D to toggle recording.")
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        cleanupAudioFile()
+    }
+
+    func cleanupAudioFile() {
+        try? FileManager.default.removeItem(atPath: audioFilePath)
     }
 
     // MARK: - Status Item
@@ -479,6 +491,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             result = result.trimmingCharacters(in: .whitespaces)
 
+            // Cleanup audio file after transcription
+            self.cleanupAudioFile()
+
             DispatchQueue.main.async {
                 if !result.isEmpty {
                     self.pasteText(result)
@@ -490,6 +505,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         } catch {
+            // Cleanup even on error
+            self.cleanupAudioFile()
+
             DispatchQueue.main.async {
                 self.statusItem.button?.title = "🎤"
                 self.updateStatus("Error")
