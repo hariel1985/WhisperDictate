@@ -2,6 +2,7 @@ import Cocoa
 import AVFoundation
 import Carbon.HIToolbox
 import ServiceManagement
+import ApplicationServices
 
 // MARK: - User Defaults Keys
 struct Defaults {
@@ -38,6 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         registerHotkey()
         requestMicrophonePermission()
+        checkAccessibilityPermission()
         checkModelExists()
 
         NSLog("WhisperDictate started. Press ⌃⌥D to toggle recording.")
@@ -248,12 +250,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         AVCaptureDevice.requestAccess(for: .audio) { granted in
             if !granted {
                 DispatchQueue.main.async {
-                    let alert = NSAlert()
-                    alert.messageText = "Microphone Access Required"
-                    alert.informativeText = "Please enable microphone access in System Settings → Privacy & Security → Microphone"
-                    alert.alertStyle = .warning
-                    alert.runModal()
+                    self.showPermissionAlert(
+                        title: "Microphone Access Required",
+                        message: "WhisperDictate needs microphone access to record your voice.",
+                        settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+                    )
                 }
+            }
+        }
+    }
+
+    func checkAccessibilityPermission() {
+        let trusted = AXIsProcessTrusted()
+        if !trusted {
+            showPermissionAlert(
+                title: "Accessibility Access Required",
+                message: "WhisperDictate needs accessibility access to paste transcribed text into other apps.",
+                settingsURL: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            )
+        }
+    }
+
+    func showPermissionAlert(title: String, message: String, settingsURL: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Later")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            if let url = URL(string: settingsURL) {
+                NSWorkspace.shared.open(url)
             }
         }
     }
