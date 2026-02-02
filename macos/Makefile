@@ -2,7 +2,7 @@
 
 APP_NAME = WhisperDictate
 APP_BUNDLE = $(APP_NAME).app
-VERSION = 1.0.0
+VERSION = 1.1.0
 
 # Directories
 SRC_DIR = src
@@ -13,7 +13,7 @@ BUNDLE_DIR = $(APP_BUNDLE)/Contents
 SWIFT = swiftc
 SWIFT_FLAGS = -O -framework Cocoa -framework AVFoundation -framework Carbon -framework CoreGraphics -framework ServiceManagement
 
-.PHONY: all clean build install run dmg
+.PHONY: all clean build bundle install run dmg
 
 all: build
 
@@ -24,14 +24,18 @@ $(BUILD_DIR)/$(APP_NAME): $(SRC_DIR)/main.swift
 	@mkdir -p $(BUILD_DIR)
 	@mkdir -p $(BUNDLE_DIR)/MacOS
 	@mkdir -p $(BUNDLE_DIR)/Resources
+	@mkdir -p $(BUNDLE_DIR)/Frameworks
 	$(SWIFT) $(SWIFT_FLAGS) -o $(BUNDLE_DIR)/MacOS/$(APP_NAME) $(SRC_DIR)/main.swift
 	@cp $(APP_BUNDLE)/Contents/Info.plist $(BUNDLE_DIR)/ 2>/dev/null || true
+	@./bundle-whisper.sh
 	@touch $(BUILD_DIR)/$(APP_NAME)
 	@echo "✓ Built $(APP_BUNDLE)"
 
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf $(BUNDLE_DIR)/MacOS/$(APP_NAME)
+	rm -rf $(BUNDLE_DIR)/MacOS/whisper-cli
+	rm -rf $(BUNDLE_DIR)/Frameworks/*.dylib
 	@echo "✓ Cleaned"
 
 install: build

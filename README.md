@@ -17,55 +17,44 @@ A simple menu bar app for voice dictation using OpenAI Whisper (local, offline).
 - 🎤 Global hotkey (⌃⌥D) to start/stop recording
 - 🔒 Fully offline - uses local Whisper model
 - ⚡ Automatic paste into any focused app
-- ⚙️ Settings window (language, model path, sounds)
+- ⚙️ Settings window with model selection dropdown
+- 📥 Built-in model downloader with progress indicator
 - 🚀 Launch at login support
+- 🔊 Sound feedback (optional)
+- 📦 Self-contained - whisper-cli bundled in app
 
 ### Requirements
 
 - macOS 13.0+
 - Apple Silicon (M1/M2/M3) or Intel Mac
-- whisper-cpp (`brew install whisper-cpp`)
-- Whisper model file
 
 ### Quick Install (Download)
 
 1. Download the latest DMG from [Releases](https://github.com/hariel1985/WhisperDictate/releases)
 2. Open the DMG and drag WhisperDictate to Applications
-3. Install dependencies:
-
-```bash
-# Install whisper-cpp
-brew install whisper-cpp
-
-# Download Whisper model
-mkdir -p ~/.whisper-models
-curl -L -o ~/.whisper-models/ggml-medium.bin \
-  "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
-```
-
-4. Launch WhisperDictate and grant permissions (Microphone + Accessibility)
+3. Launch WhisperDictate
+4. On first run, select and download a Whisper model
+5. Grant permissions (Microphone + Accessibility)
 
 ### Build from Source
-
-If you prefer to build the app yourself:
 
 ```bash
 # Clone the repository
 git clone https://github.com/hariel1985/WhisperDictate.git
 cd WhisperDictate/macos
 
+# Install whisper-cpp (required for bundling)
+brew install whisper-cpp
+
 # Build and install to /Applications
 make install
-
-# Or just build without installing
-make build
 ```
 
 #### Build Commands
 
 | Command | Description |
 |---------|-------------|
-| `make build` | Compile the app |
+| `make build` | Compile the app and bundle whisper-cli |
 | `make install` | Build and install to /Applications |
 | `make run` | Build and run |
 | `make dmg` | Create distributable DMG |
@@ -84,20 +73,23 @@ make build
 
 Click the menu bar icon → Settings to configure:
 - **Language**: 31 supported languages (dropdown)
-- **Model Path**: Path to your Whisper model file
+- **Model**: Select from installed models or download new ones
 - **Sound feedback**: Toggle audio feedback on/off
 - **Launch at login**: Start automatically when you log in
 
 ### Whisper Models
 
-| Model | Size | Speed | Accuracy | Download |
-|-------|------|-------|----------|----------|
-| tiny | 75 MB | Fastest | Basic | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin) |
-| base | 142 MB | Fast | Good | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin) |
-| small | 466 MB | Medium | Better | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin) |
-| medium | 1.5 GB | Slow | Best | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin) |
+Download models directly from the app or manually:
 
-For Intel Macs, consider using `small` or `base` models for faster transcription.
+| Model | Size | Speed | Accuracy | Best For |
+|-------|------|-------|----------|----------|
+| Tiny | 75 MB | ~1 sec | Basic | Quick tests, simple phrases |
+| Base | 142 MB | ~2 sec | Good | Clear speech, quiet environment |
+| Small | 466 MB | ~3 sec | Better | General use, some accents |
+| Medium | 1.5 GB | ~5 sec | Best | Accents, noisy audio (Recommended) |
+| Large | 3.1 GB | ~8 sec | Maximum | Difficult audio, max accuracy |
+
+Models are stored in `~/.whisper-models/`
 
 ### Audio Feedback
 
@@ -113,6 +105,13 @@ Grant these in System Settings → Privacy & Security:
 - **Accessibility** - for auto-paste
 
 > **Note**: After reinstalling or updating, you may need to remove and re-add the app in Accessibility settings.
+
+## Security
+
+- All processing is done locally - no data leaves your device
+- Audio files are stored in private temp directory and deleted after transcription
+- Input validation prevents command injection
+- No network access except for optional model downloads from Hugging Face
 
 ## License
 

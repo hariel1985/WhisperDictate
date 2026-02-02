@@ -1,6 +1,8 @@
 # Build
 macos/build/
 macos/WhisperDictate.app/Contents/MacOS/
+macos/WhisperDictate.app/Contents/Frameworks/
+macos/WhisperDictate.app/Contents/_CodeSignature/
 WhisperDictate
 *.o
 *.dSYM/

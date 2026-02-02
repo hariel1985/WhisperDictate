@@ -11,6 +11,88 @@ struct Defaults {
     static let playSounds = "playSounds"
 }
 
+// MARK: - Whisper Models
+struct WhisperModels {
+    struct Model {
+        let name: String
+        let filename: String
+        let size: String
+        let url: String
+        let pros: String
+        let cons: String
+    }
+
+    static let available: [Model] = [
+        Model(name: "Tiny",
+              filename: "ggml-tiny.bin",
+              size: "75 MB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+              pros: "Very fast (~1 sec), small download",
+              cons: "Lower accuracy, struggles with accents"),
+        Model(name: "Base",
+              filename: "ggml-base.bin",
+              size: "142 MB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+              pros: "Fast (~2 sec), good for clear speech",
+              cons: "May miss some words in noisy audio"),
+        Model(name: "Small",
+              filename: "ggml-small.bin",
+              size: "466 MB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+              pros: "Good balance of speed and accuracy",
+              cons: "Slower on Intel Macs"),
+        Model(name: "Medium (Recommended)",
+              filename: "ggml-medium.bin",
+              size: "1.5 GB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
+              pros: "Best price/performance, handles accents well",
+              cons: "Larger download, slower on older Macs"),
+        Model(name: "Large",
+              filename: "ggml-large-v3.bin",
+              size: "3.1 GB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
+              pros: "Maximum accuracy for difficult audio",
+              cons: "Very large, slow, minimal improvement over Medium")
+    ]
+
+    static var modelsDirectory: String {
+        return NSHomeDirectory() + "/.whisper-models"
+    }
+
+    static func installedModels() -> [(path: String, name: String, size: String)] {
+        var result: [(path: String, name: String, size: String)] = []
+        let fm = FileManager.default
+        let modelsDir = modelsDirectory
+
+        guard let files = try? fm.contentsOfDirectory(atPath: modelsDir) else {
+            return result
+        }
+
+        for file in files where file.hasSuffix(".bin") {
+            let path = (modelsDir as NSString).appendingPathComponent(file)
+
+            // Get file size
+            var sizeStr = ""
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let size = attrs[.size] as? Int64 {
+                if size > 1_000_000_000 {
+                    sizeStr = String(format: "%.1f GB", Double(size) / 1_000_000_000)
+                } else {
+                    sizeStr = String(format: "%.0f MB", Double(size) / 1_000_000)
+                }
+            }
+
+            // Get friendly name
+            var name = file.replacingOccurrences(of: "ggml-", with: "").replacingOccurrences(of: ".bin", with: "")
+            name = name.capitalized
+
+            result.append((path: path, name: name, size: sizeStr))
+        }
+
+        return result.sorted { $0.name < $1.name }
+    }
+}
+
 // MARK: - Supported Languages (Whisper)
 struct SupportedLanguages {
     static let codes: [String: String] = [
@@ -57,11 +139,11 @@ struct SupportedLanguages {
 }
 
 // MARK: - App Delegate
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     var statusItem: NSStatusItem!
     var audioRecorder: AVAudioRecorder?
     var isRecording = false
-    var settingsWindow: NSWindow?
+    var settingsWindowController: NSWindowController?
 
     // Use private temp directory with unique filename
     var audioFilePath: String {
@@ -89,9 +171,130 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotkey()
         requestMicrophonePermission()
         checkAccessibilityPermission()
-        checkModelExists()
+
+        // First-run: check if model exists, if not show setup wizard
+        if !hasAnyModel() {
+            showFirstRunWizard()
+        } else {
+            checkModelExists()
+        }
 
         NSLog("WhisperDictate started. Press ⌃⌥D to toggle recording.")
+    }
+
+    func hasAnyModel() -> Bool {
+        let validation = isValidModelPath(modelPath)
+        return validation.valid
+    }
+
+    // MARK: - First Run Wizard
+    func showFirstRunWizard() {
+        // Build description text
+        var infoText = "To get started, download a Whisper speech recognition model:\n\n"
+        for model in WhisperModels.available {
+            infoText += "• \(model.name) (\(model.size))\n"
+            infoText += "  ✓ \(model.pros)\n"
+            infoText += "  ✗ \(model.cons)\n\n"
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Welcome to WhisperDictate!"
+        alert.informativeText = infoText
+        alert.alertStyle = .informational
+
+        // Add model options as buttons
+        for model in WhisperModels.available.reversed() {
+            alert.addButton(withTitle: "\(model.name) (\(model.size))")
+        }
+        alert.addButton(withTitle: "Cancel")
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+
+        // Map response to model index (buttons are reversed)
+        let modelCount = WhisperModels.available.count
+        let buttonIndex = response.rawValue - 1000  // NSAlertFirstButtonReturn = 1000
+
+        if buttonIndex < modelCount {
+            let modelIndex = modelCount - 1 - buttonIndex
+            let selectedModel = WhisperModels.available[modelIndex]
+            downloadModel(selectedModel)
+        } else {
+            updateStatus("⚠️ No model selected")
+        }
+    }
+
+    var downloadTask: URLSessionDownloadTask?
+    var downloadSession: URLSession?
+    var currentDownloadModel: WhisperModels.Model?
+    var currentDownloadDestination: String?
+
+    func downloadModel(_ model: WhisperModels.Model) {
+        updateStatus("0% Downloading \(model.name)")
+        statusItem.button?.title = "⬇️"
+
+        // Create models directory
+        let modelsDir = WhisperModels.modelsDirectory
+        try? FileManager.default.createDirectory(atPath: modelsDir, withIntermediateDirectories: true)
+
+        let destinationPath = (modelsDir as NSString).appendingPathComponent(model.filename)
+
+        // Remove existing file if any
+        try? FileManager.default.removeItem(atPath: destinationPath)
+
+        guard let url = URL(string: model.url) else {
+            updateStatus("⚠️ Invalid URL")
+            return
+        }
+
+        // Store for delegate callbacks
+        currentDownloadModel = model
+        currentDownloadDestination = destinationPath
+
+        let config = URLSessionConfiguration.default
+        downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: .main)
+        downloadTask = downloadSession?.downloadTask(with: url)
+        downloadTask?.resume()
+    }
+
+    // MARK: - URLSessionDownloadDelegate
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard let model = currentDownloadModel else { return }
+        let progress = totalBytesExpectedToWrite > 0 ? Int((Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)) * 100) : 0
+        updateStatus("\(progress)% Downloading \(model.name)")
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        guard let model = currentDownloadModel, let destinationPath = currentDownloadDestination else { return }
+        let destinationURL = URL(fileURLWithPath: destinationPath)
+
+        do {
+            try FileManager.default.moveItem(at: location, to: destinationURL)
+            modelPath = destinationPath
+            statusItem.button?.title = "🎤"
+            updateStatus("Ready - \(model.name)")
+            if playSounds { NSSound(named: "Glass")?.play() }
+            NSLog("Model downloaded: \(model.name)")
+        } catch {
+            statusItem.button?.title = "🎤"
+            updateStatus("⚠️ Save failed")
+            if playSounds { NSSound(named: "Basso")?.play() }
+            NSLog("Save failed: \(error)")
+        }
+
+        currentDownloadModel = nil
+        currentDownloadDestination = nil
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            statusItem.button?.title = "🎤"
+            updateStatus("⚠️ Download failed")
+            if playSounds { NSSound(named: "Basso")?.play() }
+            NSLog("Download failed: \(error)")
+            currentDownloadModel = nil
+            currentDownloadDestination = nil
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -126,10 +329,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Settings Window
     @objc func showSettings() {
-        if settingsWindow == nil {
-            settingsWindow = createSettingsWindow()
-        }
-        settingsWindow?.makeKeyAndOrderFront(nil)
+        // Always create a fresh window to avoid zombie pointer issues
+        let window = createSettingsWindow()
+        settingsWindowController = NSWindowController(window: window)
+        settingsWindowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -171,21 +374,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         y -= 40
 
-        // Model Path
-        let modelLabel = NSTextField(labelWithString: "Model Path:")
+        // Model Selection
+        let modelLabel = NSTextField(labelWithString: "Model:")
         modelLabel.frame = NSRect(x: 20, y: y, width: labelWidth, height: 24)
         contentView.addSubview(modelLabel)
 
-        let modelField = NSTextField(string: modelPath)
-        modelField.frame = NSRect(x: controlX, y: y, width: controlWidth - 40, height: 24)
-        modelField.tag = 2
-        modelField.target = self
-        modelField.action = #selector(modelPathChanged(_:))
-        contentView.addSubview(modelField)
+        let installedModels = WhisperModels.installedModels()
 
-        let browseBtn = NSButton(title: "...", target: self, action: #selector(browseModel))
-        browseBtn.frame = NSRect(x: controlX + controlWidth - 35, y: y, width: 35, height: 24)
-        contentView.addSubview(browseBtn)
+        if installedModels.isEmpty {
+            let noModelLabel = NSTextField(labelWithString: "No models - click Download")
+            noModelLabel.frame = NSRect(x: controlX, y: y, width: 200, height: 24)
+            noModelLabel.textColor = .secondaryLabelColor
+            contentView.addSubview(noModelLabel)
+        } else {
+            let modelPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y, width: 200, height: 24), pullsDown: false)
+            modelPopup.tag = 2
+
+            for (index, model) in installedModels.enumerated() {
+                let title = "\(model.name) (\(model.size))"
+                modelPopup.addItem(withTitle: title)
+                // Use tag instead of representedObject to avoid memory issues
+                modelPopup.lastItem?.tag = index
+            }
+
+            // Select current model
+            for (index, model) in installedModels.enumerated() {
+                if model.path == modelPath {
+                    modelPopup.selectItem(at: index)
+                    break
+                }
+            }
+
+            modelPopup.target = self
+            modelPopup.action = #selector(modelSelected(_:))
+            contentView.addSubview(modelPopup)
+        }
+
+        let downloadBtn = NSButton(title: "Download...", target: self, action: #selector(downloadNewModel))
+        downloadBtn.frame = NSRect(x: controlX + 210, y: y, width: 80, height: 24)
+        contentView.addSubview(downloadBtn)
 
         y -= 40
 
@@ -214,11 +441,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         loginCheck.state = isLaunchAtLoginEnabled() ? .on : .off
         contentView.addSubview(loginCheck)
 
-        // Model download hint
-        let hintLabel = NSTextField(wrappingLabelWithString: "Model not found? Run: curl -L -o ~/.whisper-models/ggml-medium.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin")
-        hintLabel.frame = NSRect(x: 20, y: 15, width: 410, height: 40)
+        // Models directory hint
+        let hintLabel = NSTextField(labelWithString: "Models stored in: ~/.whisper-models/")
+        hintLabel.frame = NSRect(x: 20, y: 15, width: 410, height: 20)
         hintLabel.font = NSFont.systemFont(ofSize: 10)
-        hintLabel.textColor = .secondaryLabelColor
+        hintLabel.textColor = .tertiaryLabelColor
         contentView.addSubview(hintLabel)
 
         window.contentView = contentView
@@ -241,6 +468,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         checkModelExists()
     }
 
+    @objc func modelSelected(_ sender: NSPopUpButton) {
+        let index = sender.selectedItem?.tag ?? 0
+        let installedModels = WhisperModels.installedModels()
+        if index >= 0 && index < installedModels.count {
+            let path = installedModels[index].path
+            modelPath = path
+            checkModelExists()
+            NSLog("Model changed to: \(path)")
+        }
+    }
+
+    @objc func downloadNewModel() {
+        // Create simple popup menu for model selection
+        let menu = NSMenu(title: "Select Model")
+
+        for (index, model) in WhisperModels.available.enumerated() {
+            let item = NSMenuItem(title: "\(model.name) (\(model.size))", action: #selector(downloadModelAtIndex(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = index
+
+            // Add subtitle with pros/cons
+            item.toolTip = "✓ \(model.pros)\n✗ \(model.cons)"
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: "Cancel", action: nil, keyEquivalent: ""))
+
+        // Show menu at mouse location
+        if let event = NSApp.currentEvent {
+            NSMenu.popUpContextMenu(menu, with: event, for: settingsWindowController?.window?.contentView ?? statusItem.button!)
+        }
+    }
+
+    @objc func downloadModelAtIndex(_ sender: NSMenuItem) {
+        let index = sender.tag
+        guard index >= 0 && index < WhisperModels.available.count else { return }
+        let model = WhisperModels.available[index]
+        NSLog("Starting download of \(model.name)")
+        downloadModel(model)
+    }
+
     @objc func browseModel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
@@ -249,7 +518,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if panel.runModal() == .OK, let url = panel.url {
             modelPath = url.path
-            if let contentView = settingsWindow?.contentView {
+            if let contentView = settingsWindowController?.window?.contentView {
                 for subview in contentView.subviews {
                     if let textField = subview as? NSTextField, textField.tag == 2 {
                         textField.stringValue = modelPath
@@ -444,7 +713,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Whisper CLI Detection
     func findWhisperCLI() -> String? {
-        // Check common paths for whisper-cli
+        // First check for bundled whisper-cli
+        if let bundlePath = Bundle.main.executablePath {
+            let bundledCLI = (bundlePath as NSString).deletingLastPathComponent + "/whisper-cli"
+            if FileManager.default.isExecutableFile(atPath: bundledCLI) {
+                return bundledCLI
+            }
+        }
+
+        // Fall back to system paths
         let paths = [
             "/opt/homebrew/bin/whisper-cli",  // ARM Mac (M1/M2/M3)
             "/usr/local/bin/whisper-cli",      // Intel Mac
