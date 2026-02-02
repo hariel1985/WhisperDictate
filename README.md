@@ -17,6 +17,7 @@ A simple menu bar app for voice dictation using OpenAI Whisper (local, offline).
 - 🎤 Global hotkey (⌃⌥D) to start/stop recording
 - 🔒 Fully offline - uses local Whisper model
 - ⚡ Automatic paste into any focused app
+- 📋 Clipboard preservation - your copied content is restored after paste
 - ⚙️ Settings window with model selection dropdown
 - 📥 Built-in model downloader with progress indicator
 - 🚀 Launch at login support

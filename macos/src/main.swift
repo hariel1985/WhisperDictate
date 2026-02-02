@@ -825,12 +825,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     // MARK: - Paste
     func pasteText(_ text: String) {
         let pasteboard = NSPasteboard.general
+
+        // Save current clipboard contents
+        let savedItems = saveClipboard()
+
+        // Set transcript to clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
         NSLog("Transcribed: \(text)")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Simulate Cmd+V
             let source = CGEventSource(stateID: .hidSystemState)
 
             let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
@@ -841,9 +847,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
             keyUp?.flags = .maskCommand
             keyUp?.post(tap: .cghidEventTap)
 
+            // Restore original clipboard after a short delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self.restoreClipboard(savedItems)
+            }
+
             self.statusItem.button?.title = "🎤"
             self.updateStatus("Ready")
             if self.playSounds { NSSound(named: "Glass")?.play() }
+        }
+    }
+
+    func saveClipboard() -> [[NSPasteboard.PasteboardType: Data]] {
+        let pasteboard = NSPasteboard.general
+        var savedItems: [[NSPasteboard.PasteboardType: Data]] = []
+
+        for item in pasteboard.pasteboardItems ?? [] {
+            var itemData: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    itemData[type] = data
+                }
+            }
+            if !itemData.isEmpty {
+                savedItems.append(itemData)
+            }
+        }
+        return savedItems
+    }
+
+    func restoreClipboard(_ savedItems: [[NSPasteboard.PasteboardType: Data]]) {
+        guard !savedItems.isEmpty else { return }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        for itemData in savedItems {
+            let item = NSPasteboardItem()
+            for (type, data) in itemData {
+                item.setData(data, forType: type)
+            }
+            pasteboard.writeObjects([item])
         }
     }
 }
