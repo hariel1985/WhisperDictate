@@ -23,34 +23,53 @@ A simple menu bar app for voice dictation using OpenAI Whisper (local, offline).
 ### Requirements
 
 - macOS 13.0+
-- Apple Silicon Mac (M1/M2/M3)
+- Apple Silicon (M1/M2/M3) or Intel Mac
 - whisper-cpp (`brew install whisper-cpp`)
 - Whisper model file
 
-### Installation
+### Quick Install (Download)
 
-#### 1. Install whisper-cpp
+1. Download the latest DMG from [Releases](https://github.com/hariel1985/WhisperDictate/releases)
+2. Open the DMG and drag WhisperDictate to Applications
+3. Install dependencies:
 
 ```bash
+# Install whisper-cpp
 brew install whisper-cpp
-```
 
-#### 2. Download Whisper model
-
-```bash
+# Download Whisper model
 mkdir -p ~/.whisper-models
 curl -L -o ~/.whisper-models/ggml-medium.bin \
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
 ```
 
-#### 3. Build and install
+4. Launch WhisperDictate and grant permissions (Microphone + Accessibility)
+
+### Build from Source
+
+If you prefer to build the app yourself:
 
 ```bash
-cd macos
+# Clone the repository
+git clone https://github.com/hariel1985/WhisperDictate.git
+cd WhisperDictate/macos
+
+# Build and install to /Applications
 make install
+
+# Or just build without installing
+make build
 ```
 
-This compiles the app and installs it to `/Applications/WhisperDictate.app`.
+#### Build Commands
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Compile the app |
+| `make install` | Build and install to /Applications |
+| `make run` | Build and run |
+| `make dmg` | Create distributable DMG |
+| `make clean` | Remove build artifacts |
 
 ### Usage
 
@@ -64,10 +83,21 @@ This compiles the app and installs it to `/Applications/WhisperDictate.app`.
 ### Settings
 
 Click the menu bar icon → Settings to configure:
-- **Language**: Two-letter code (hu, en, de, fr, es...)
+- **Language**: 31 supported languages (dropdown)
 - **Model Path**: Path to your Whisper model file
 - **Sound feedback**: Toggle audio feedback on/off
 - **Launch at login**: Start automatically when you log in
+
+### Whisper Models
+
+| Model | Size | Speed | Accuracy | Download |
+|-------|------|-------|----------|----------|
+| tiny | 75 MB | Fastest | Basic | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin) |
+| base | 142 MB | Fast | Good | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin) |
+| small | 466 MB | Medium | Better | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin) |
+| medium | 1.5 GB | Slow | Best | [Download](https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin) |
+
+For Intel Macs, consider using `small` or `base` models for faster transcription.
 
 ### Audio Feedback
 
@@ -82,15 +112,7 @@ Grant these in System Settings → Privacy & Security:
 - **Microphone** - for recording
 - **Accessibility** - for auto-paste
 
-### Build Commands
-
-```bash
-make build    # Compile the app
-make install  # Install to /Applications
-make run      # Build and run
-make dmg      # Create distributable DMG
-make clean    # Remove build artifacts
-```
+> **Note**: After reinstalling or updating, you may need to remove and re-add the app in Accessibility settings.
 
 ## License
 
