@@ -1,0 +1,12 @@
+# Build
+WhisperDictate
+*.o
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
