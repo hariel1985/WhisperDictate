@@ -1,30 +1,41 @@
 # WhisperDictate
 
-A simple macOS menu bar app for voice dictation using OpenAI Whisper (local, offline).
+A simple menu bar app for voice dictation using OpenAI Whisper (local, offline).
 
-## Features
+## Platforms
+
+| Platform | Language | Status |
+|----------|----------|--------|
+| macOS | Swift | ✅ Ready |
+| Linux | Rust | 🔜 Planned |
+| Windows | C# | 🔜 Planned |
+
+## macOS
+
+### Features
 
 - 🎤 Global hotkey (⌃⌥D) to start/stop recording
 - 🔒 Fully offline - uses local Whisper model
-- ⚡ Automatic paste into any app
-- 🇭🇺 Hungarian language support (configurable)
+- ⚡ Automatic paste into any focused app
+- ⚙️ Settings window (language, model path, sounds)
+- 🚀 Launch at login support
 
-## Requirements
+### Requirements
 
 - macOS 13.0+
 - Apple Silicon Mac (M1/M2/M3)
 - whisper-cpp (`brew install whisper-cpp`)
 - Whisper model file
 
-## Installation
+### Installation
 
-### 1. Install whisper-cpp
+#### 1. Install whisper-cpp
 
 ```bash
-brew install whisper-cpp sox
+brew install whisper-cpp
 ```
 
-### 2. Download Whisper model
+#### 2. Download Whisper model
 
 ```bash
 mkdir -p ~/.whisper-models
@@ -32,58 +43,54 @@ curl -L -o ~/.whisper-models/ggml-medium.bin \
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
 ```
 
-### 3. Build WhisperDictate
+#### 3. Build and install
 
 ```bash
-git clone https://github.com/YourUsername/WhisperDictate.git
-cd WhisperDictate
-swiftc -o WhisperDictate main.swift \
-    -framework Cocoa \
-    -framework AVFoundation \
-    -framework Carbon \
-    -framework CoreGraphics
+cd macos
+make install
 ```
 
-### 4. Run
+This compiles the app and installs it to `/Applications/WhisperDictate.app`.
 
-```bash
-./WhisperDictate
-```
+### Usage
 
-Or copy to your bin folder:
+1. Launch WhisperDictate from Applications
+2. Look for the 🎤 icon in your menu bar
+3. Press **⌃⌥D** (Control + Option + D) to start recording
+4. Speak (icon changes to 🔴)
+5. Press **⌃⌥D** again to stop and transcribe
+6. Text is automatically pasted where your cursor is
 
-```bash
-cp WhisperDictate ~/bin/
-~/bin/WhisperDictate &
-```
+### Settings
 
-## Usage
+Click the menu bar icon → Settings to configure:
+- **Language**: Two-letter code (hu, en, de, fr, es...)
+- **Model Path**: Path to your Whisper model file
+- **Sound feedback**: Toggle audio feedback on/off
+- **Launch at login**: Start automatically when you log in
 
-1. Look for the 🎤 icon in your menu bar
-2. Press **⌃⌥D** (Control + Option + D) to start recording
-3. Speak (icon changes to 🔴)
-4. Press **⌃⌥D** again to stop and transcribe
-5. Text is automatically pasted where your cursor is
-
-## Audio Feedback
+### Audio Feedback
 
 - 🔔 **Tink** - Recording started
 - 🔔 **Pop** - Recording stopped, processing
 - 🔔 **Glass** - Success, text pasted
 - 🔔 **Basso** - Error
 
-## Permissions
+### Permissions
 
-The app needs:
-- **Microphone** access (System Settings → Privacy & Security → Microphone)
-- **Accessibility** access for auto-paste (System Settings → Privacy & Security → Accessibility)
+Grant these in System Settings → Privacy & Security:
+- **Microphone** - for recording
+- **Accessibility** - for auto-paste
 
-## Configuration
+### Build Commands
 
-Edit `main.swift` to change:
-- Language: Change `"-l", "hu"` to your language code (e.g., `"en"`, `"de"`)
-- Hotkey: Modify `registerHotkey()` function
-- Model: Change `whisperModel` path for different model sizes
+```bash
+make build    # Compile the app
+make install  # Install to /Applications
+make run      # Build and run
+make dmg      # Create distributable DMG
+make clean    # Remove build artifacts
+```
 
 ## License
 
