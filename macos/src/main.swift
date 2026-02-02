@@ -442,6 +442,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Whisper CLI Detection
+    func findWhisperCLI() -> String? {
+        // Check common paths for whisper-cli
+        let paths = [
+            "/opt/homebrew/bin/whisper-cli",  // ARM Mac (M1/M2/M3)
+            "/usr/local/bin/whisper-cli",      // Intel Mac
+            "/opt/local/bin/whisper-cli",      // MacPorts
+            NSHomeDirectory() + "/bin/whisper-cli"  // User local
+        ]
+
+        for path in paths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        return nil
+    }
+
     // MARK: - Transcription
     func transcribe() {
         // Validate inputs before execution
@@ -464,8 +482,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        guard let whisperPath = findWhisperCLI() else {
+            DispatchQueue.main.async {
+                self.statusItem.button?.title = "🎤"
+                self.updateStatus("⚠️ whisper-cli not found")
+                if self.playSounds { NSSound(named: "Basso")?.play() }
+                NSLog("whisper-cli not found in PATH")
+            }
+            return
+        }
+
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/whisper-cli")
+        task.executableURL = URL(fileURLWithPath: whisperPath)
         task.arguments = ["-m", modelPath, "-l", language.lowercased(), "-f", audioFilePath]
 
         let pipe = Pipe()
