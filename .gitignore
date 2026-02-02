@@ -1,6 +1,7 @@
 # Build
 macos/build/
 macos/WhisperDictate.app/Contents/MacOS/
+WhisperDictate
 *.o
 *.dSYM/
 *.dmg
