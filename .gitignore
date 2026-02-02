@@ -1,7 +1,9 @@
 # Build
-WhisperDictate
+macos/build/
+macos/WhisperDictate.app/Contents/MacOS/
 *.o
 *.dSYM/
+*.dmg
 
 # macOS
 .DS_Store
