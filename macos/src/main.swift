@@ -11,6 +11,51 @@ struct Defaults {
     static let playSounds = "playSounds"
 }
 
+// MARK: - Supported Languages (Whisper)
+struct SupportedLanguages {
+    static let codes: [String: String] = [
+        "hu": "Magyar",
+        "en": "English",
+        "de": "Deutsch",
+        "fr": "Français",
+        "es": "Español",
+        "it": "Italiano",
+        "pt": "Português",
+        "nl": "Nederlands",
+        "pl": "Polski",
+        "ru": "Русский",
+        "uk": "Українська",
+        "cs": "Čeština",
+        "sk": "Slovenčina",
+        "ro": "Română",
+        "hr": "Hrvatski",
+        "sr": "Srpski",
+        "sl": "Slovenščina",
+        "ja": "日本語",
+        "zh": "中文",
+        "ko": "한국어",
+        "ar": "العربية",
+        "tr": "Türkçe",
+        "vi": "Tiếng Việt",
+        "th": "ไทย",
+        "el": "Ελληνικά",
+        "he": "עברית",
+        "hi": "हिन्दी",
+        "sv": "Svenska",
+        "da": "Dansk",
+        "fi": "Suomi",
+        "no": "Norsk"
+    ]
+
+    static func isValid(_ code: String) -> Bool {
+        return codes.keys.contains(code.lowercased())
+    }
+
+    static var sortedCodes: [(code: String, name: String)] {
+        return codes.sorted { $0.value < $1.value }.map { (code: $0.key, name: $0.value) }
+    }
+}
+
 // MARK: - App Delegate
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -98,18 +143,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         langLabel.frame = NSRect(x: 20, y: y, width: labelWidth, height: 24)
         contentView.addSubview(langLabel)
 
-        let langField = NSTextField(string: language)
-        langField.frame = NSRect(x: controlX, y: y, width: 60, height: 24)
-        langField.tag = 1
-        langField.target = self
-        langField.action = #selector(languageChanged(_:))
-        contentView.addSubview(langField)
-
-        let langHint = NSTextField(labelWithString: "(hu, en, de, fr, es...)")
-        langHint.frame = NSRect(x: 210, y: y, width: 150, height: 24)
-        langHint.textColor = .secondaryLabelColor
-        langHint.font = NSFont.systemFont(ofSize: 11)
-        contentView.addSubview(langHint)
+        let langPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y, width: 180, height: 24), pullsDown: false)
+        langPopup.tag = 1
+        for lang in SupportedLanguages.sortedCodes {
+            langPopup.addItem(withTitle: "\(lang.name) (\(lang.code))")
+            langPopup.lastItem?.representedObject = lang.code
+        }
+        // Select current language
+        if let index = SupportedLanguages.sortedCodes.firstIndex(where: { $0.code == language }) {
+            langPopup.selectItem(at: index)
+        }
+        langPopup.target = self
+        langPopup.action = #selector(languageChanged(_:))
+        contentView.addSubview(langPopup)
 
         y -= 40
 
@@ -167,13 +213,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return window
     }
 
-    @objc func languageChanged(_ sender: NSTextField) {
-        language = sender.stringValue
-        NSLog("Language changed to: \(language)")
+    @objc func languageChanged(_ sender: NSPopUpButton) {
+        if let code = sender.selectedItem?.representedObject as? String {
+            language = code
+            NSLog("Language changed to: \(language)")
+        }
     }
 
     @objc func modelPathChanged(_ sender: NSTextField) {
-        modelPath = sender.stringValue
+        let newPath = sender.stringValue
+        let validation = isValidModelPath(newPath)
+        if validation.valid {
+            modelPath = newPath
+        }
         checkModelExists()
     }
 
@@ -226,10 +278,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Model Check
+    // MARK: - Model Validation
+    func isValidModelPath(_ path: String) -> (valid: Bool, error: String?) {
+        // Check extension
+        if !path.lowercased().hasSuffix(".bin") {
+            return (false, "Model must be a .bin file")
+        }
+
+        // Check for path traversal attempts
+        let normalized = (path as NSString).standardizingPath
+        if normalized.contains("..") {
+            return (false, "Invalid path")
+        }
+
+        // Check file exists
+        if !FileManager.default.fileExists(atPath: normalized) {
+            return (false, "Model not found")
+        }
+
+        return (true, nil)
+    }
+
     func checkModelExists() {
-        if !FileManager.default.fileExists(atPath: modelPath) {
-            updateStatus("⚠️ Model not found")
+        let validation = isValidModelPath(modelPath)
+        if !validation.valid {
+            updateStatus("⚠️ \(validation.error ?? "Invalid model")")
         } else {
             updateStatus("Ready")
         }
@@ -359,9 +432,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Transcription
     func transcribe() {
+        // Validate inputs before execution
+        let modelValidation = isValidModelPath(modelPath)
+        guard modelValidation.valid else {
+            DispatchQueue.main.async {
+                self.statusItem.button?.title = "🎤"
+                self.updateStatus("⚠️ \(modelValidation.error ?? "Invalid model")")
+                if self.playSounds { NSSound(named: "Basso")?.play() }
+            }
+            return
+        }
+
+        guard SupportedLanguages.isValid(language) else {
+            DispatchQueue.main.async {
+                self.statusItem.button?.title = "🎤"
+                self.updateStatus("⚠️ Invalid language")
+                if self.playSounds { NSSound(named: "Basso")?.play() }
+            }
+            return
+        }
+
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/whisper-cli")
-        task.arguments = ["-m", modelPath, "-l", language, "-f", audioFilePath]
+        task.arguments = ["-m", modelPath, "-l", language.lowercased(), "-f", audioFilePath]
 
         let pipe = Pipe()
         task.standardOutput = pipe
