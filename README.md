@@ -73,7 +73,7 @@ make install
 ### Settings
 
 Click the menu bar icon → Settings to configure:
-- **Language**: 31 supported languages (dropdown)
+- **Language**: Auto-detect or 31 supported languages
 - **Model**: Select from installed models or download new ones
 - **Sound feedback**: Toggle audio feedback on/off
 - **Launch at login**: Start automatically when you log in
@@ -112,6 +112,8 @@ Grant these in System Settings → Privacy & Security:
 
 - All processing is done locally - no data leaves your device
 - Audio files are stored in private temp directory and deleted after transcription
+- Clipboard is cleared after paste (transcript doesn't remain accessible)
+- Original clipboard content is preserved and restored after paste
 - Input validation prevents command injection
 - No network access except for optional model downloads from Hugging Face
 
