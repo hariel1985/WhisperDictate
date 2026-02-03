@@ -867,8 +867,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
             keyUp?.post(tap: .cghidEventTap)
 
             // Restore original clipboard after a short delay
+            // If clipboard was empty, clear it (don't leave transcript)
+            // If clipboard had content, restore it
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                self.restoreClipboard(savedItems)
+                if savedItems.isEmpty {
+                    NSPasteboard.general.clearContents()
+                } else {
+                    self.restoreClipboard(savedItems)
+                }
             }
 
             self.statusItem.button?.title = "🎤"
