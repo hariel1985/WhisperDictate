@@ -101,7 +101,10 @@ struct WhisperModels {
 
 // MARK: - Supported Languages (Whisper)
 struct SupportedLanguages {
+    static let autoDetect = "auto"
+
     static let codes: [String: String] = [
+        "auto": "Auto-detect",
         "hu": "Magyar",
         "en": "English",
         "de": "Deutsch",
@@ -136,11 +139,14 @@ struct SupportedLanguages {
     ]
 
     static func isValid(_ code: String) -> Bool {
-        return codes.keys.contains(code.lowercased())
+        return code == autoDetect || codes.keys.contains(code.lowercased())
     }
 
     static var sortedCodes: [(code: String, name: String)] {
-        return codes.sorted { $0.value < $1.value }.map { (code: $0.key, name: $0.value) }
+        // Put Auto-detect first, then sort the rest alphabetically
+        var result = [(code: "auto", name: "Auto-detect")]
+        result += codes.filter { $0.key != "auto" }.sorted { $0.value < $1.value }.map { (code: $0.key, name: $0.value) }
+        return result
     }
 }
 
@@ -777,7 +783,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: whisperPath)
-        task.arguments = ["-m", modelPath, "-l", language.lowercased(), "-f", audioFilePath]
+
+        // Build arguments - skip language flag for auto-detect
+        var args = ["-m", modelPath]
+        if language.lowercased() != SupportedLanguages.autoDetect {
+            args += ["-l", language.lowercased()]
+        }
+        args += ["-f", audioFilePath]
+        task.arguments = args
 
         let pipe = Pipe()
         task.standardOutput = pipe
