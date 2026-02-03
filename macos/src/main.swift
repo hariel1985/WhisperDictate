@@ -41,18 +41,24 @@ struct WhisperModels {
               url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
               pros: "Good balance of speed and accuracy",
               cons: "Slower on Intel Macs"),
-        Model(name: "Medium (Recommended)",
+        Model(name: "Medium",
               filename: "ggml-medium.bin",
               size: "1.5 GB",
               url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin",
-              pros: "Best price/performance, handles accents well",
+              pros: "Good accuracy, handles accents well",
               cons: "Larger download, slower on older Macs"),
-        Model(name: "Large",
+        Model(name: "Large v3 Turbo (Recommended)",
+              filename: "ggml-large-v3-turbo.bin",
+              size: "1.6 GB",
+              url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+              pros: "Best speed/accuracy ratio, fast like Medium, accurate like Large",
+              cons: "Slightly larger than Medium"),
+        Model(name: "Large v3",
               filename: "ggml-large-v3.bin",
               size: "3.1 GB",
               url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin",
               pros: "Maximum accuracy for difficult audio",
-              cons: "Very large, slow, minimal improvement over Medium")
+              cons: "Very large, slow, minimal improvement over Turbo")
     ]
 
     static var modelsDirectory: String {

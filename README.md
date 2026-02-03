@@ -87,8 +87,9 @@ Download models directly from the app or manually:
 | Tiny | 75 MB | ~1 sec | Basic | Quick tests, simple phrases |
 | Base | 142 MB | ~2 sec | Good | Clear speech, quiet environment |
 | Small | 466 MB | ~3 sec | Better | General use, some accents |
-| Medium | 1.5 GB | ~5 sec | Best | Accents, noisy audio (Recommended) |
-| Large | 3.1 GB | ~8 sec | Maximum | Difficult audio, max accuracy |
+| Medium | 1.5 GB | ~5 sec | Great | Accents, noisy audio |
+| Large v3 Turbo | 1.6 GB | ~4 sec | Best | **Recommended** - fast like Medium, accurate like Large |
+| Large v3 | 3.1 GB | ~8 sec | Maximum | Difficult audio, max accuracy |
 
 Models are stored in `~/.whisper-models/`
 
