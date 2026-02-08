@@ -103,8 +103,11 @@ Models are stored in `~/.whisper-models/`
 ### Permissions
 
 Grant these in System Settings → Privacy & Security:
-- **Microphone** - for recording
-- **Accessibility** - for auto-paste
+
+| Permission | Why it's needed |
+|------------|-----------------|
+| **Microphone** | To record your voice for transcription |
+| **Accessibility** | To simulate ⌘V keystroke and paste text into any app. macOS requires this permission for apps that send keyboard events to other applications. |
 
 > **Note**: After reinstalling or updating, you may need to remove and re-add the app in Accessibility settings.
 
