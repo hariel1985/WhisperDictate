@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Not sandboxed: WhisperDictate uses global Accessibility / synthetic
+	     keystrokes and spawns a bundled CLI, which the App Sandbox forbids.
+	     Distributed via Developer ID, not the Mac App Store. -->
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+	<!-- The app bundles whisper-cli + ggml/whisper dylibs in the app. Disabling
+	     library validation lets the process tree load them without tripping the
+	     hardened runtime's same-Team-ID check. -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
