@@ -307,6 +307,83 @@ final class WhisperServer {
     }
 }
 
+// MARK: - Recording HUD (live mic level + silence warning)
+// A small floating, non-interactive panel shown while recording. Doubles as a
+// diagnostic: if the input stays silent it flags "no input" — exactly the
+// failure that silently produced empty recordings + whisper hallucinations.
+final class MeterView: NSView {
+    private var level: CGFloat = 0
+    private var silent = false
+
+    func set(level: CGFloat, silent: Bool) {
+        self.level = max(0, min(1, level))
+        self.silent = silent
+        needsDisplay = true
+    }
+    func reset() { level = 0; silent = false; needsDisplay = true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let bg = NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12)
+        NSColor(calibratedWhite: 0.10, alpha: 0.93).setFill()
+        bg.fill()
+
+        let label = silent ? "🎤 Nincs hangbemenet?" : "🎤 Felvétel…"
+        label.draw(at: NSPoint(x: 16, y: bounds.height - 26), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: silent ? NSColor.systemRed : NSColor.white
+        ])
+
+        let segs = 20
+        let margin: CGFloat = 16, gap: CGFloat = 3, segH: CGFloat = 14, y: CGFloat = 14
+        let segW = (bounds.width - margin * 2 - gap * CGFloat(segs - 1)) / CGFloat(segs)
+        let lit = Int((level * CGFloat(segs)).rounded())
+        for i in 0..<segs {
+            let rect = NSRect(x: margin + CGFloat(i) * (segW + gap), y: y, width: segW, height: segH)
+            let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
+            if i < lit {
+                let frac = CGFloat(i) / CGFloat(segs)
+                (silent ? NSColor.systemRed
+                        : frac > 0.85 ? .systemRed
+                        : frac > 0.6 ? .systemYellow : .systemGreen).setFill()
+            } else {
+                NSColor(calibratedWhite: 1, alpha: 0.12).setFill()
+            }
+            path.fill()
+        }
+    }
+}
+
+final class RecordingHUD {
+    private var window: NSWindow?
+    private let meter = MeterView(frame: NSRect(x: 0, y: 0, width: 260, height: 72))
+
+    func show() {
+        if window == nil {
+            let w = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 72),
+                            styleMask: [.borderless, .nonactivatingPanel],
+                            backing: .buffered, defer: false)
+            w.isOpaque = false
+            w.backgroundColor = .clear
+            w.hasShadow = true
+            w.level = .statusBar
+            w.ignoresMouseEvents = true
+            w.isFloatingPanel = true
+            w.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+            w.contentView = meter
+            window = w
+        }
+        if let screen = NSScreen.main, let window = window {
+            let vf = screen.visibleFrame
+            window.setFrameOrigin(NSPoint(x: vf.midX - window.frame.width / 2, y: vf.minY + 120))
+        }
+        meter.reset()
+        window?.orderFrontRegardless()
+    }
+
+    func update(level: CGFloat, silent: Bool) { meter.set(level: level, silent: silent) }
+    func hide() { window?.orderOut(nil) }
+}
+
 // MARK: - App Delegate
 class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     var statusItem: NSStatusItem!
@@ -314,6 +391,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     var isRecording = false
     var settingsWindowController: NSWindowController?
     var whisperServer: WhisperServer?
+    let recordingHUD = RecordingHUD()
+    var meterTimer: Timer?
+    var silenceStart: Date?
 
     // Use private temp directory with unique filename
     var audioFilePath: String {
@@ -863,21 +943,58 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
         do {
             audioRecorder = try AVAudioRecorder(url: audioURL, settings: settings)
+            audioRecorder?.isMeteringEnabled = true
             audioRecorder?.record()
             isRecording = true
             statusItem.button?.title = "🔴"
             updateStatus("Recording...")
             if playSounds { NSSound(named: "Tink")?.play() }
             NSLog("Recording started")
+            startMeter()
         } catch {
             NSLog("Recording failed: \(error)")
             if playSounds { NSSound(named: "Basso")?.play() }
         }
     }
 
+    // MARK: - Live mic meter (HUD)
+    func startMeter() {
+        silenceStart = nil
+        recordingHUD.show()
+        meterTimer?.invalidate()
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.updateMeter()
+        }
+    }
+
+    func stopMeter() {
+        meterTimer?.invalidate()
+        meterTimer = nil
+        silenceStart = nil
+        recordingHUD.hide()
+    }
+
+    func updateMeter() {
+        guard isRecording, let recorder = audioRecorder else { return }
+        recorder.updateMeters()
+        let avg = recorder.averagePower(forChannel: 0)   // dBFS, ~-160...0
+        let peak = recorder.peakPower(forChannel: 0)
+        let level = max(0, min(1, CGFloat((avg + 50) / 50)))
+
+        // Flag "no input" if the peak stays at silence for over ~1.2s.
+        if peak < -50 {
+            if silenceStart == nil { silenceStart = Date() }
+        } else {
+            silenceStart = nil
+        }
+        let silent = silenceStart.map { Date().timeIntervalSince($0) > 1.2 } ?? false
+        recordingHUD.update(level: level, silent: silent)
+    }
+
     func stopRecordingAndTranscribe() {
         audioRecorder?.stop()
         isRecording = false
+        stopMeter()
         statusItem.button?.title = "⏳"
         updateStatus("Transcribing...")
         if playSounds { NSSound(named: "Pop")?.play() }
