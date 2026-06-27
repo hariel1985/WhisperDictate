@@ -328,7 +328,7 @@ final class MeterView: NSView {
         NSColor(calibratedWhite: 0.10, alpha: 0.93).setFill()
         bg.fill()
 
-        let label = silent ? "🎤 Nincs hangbemenet?" : "🎤 Felvétel…"
+        let label = silent ? "🎤 No audio input?" : "🎤 Recording…"
         label.draw(at: NSPoint(x: 16, y: bounds.height - 26), withAttributes: [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
             .foregroundColor: silent ? NSColor.systemRed : NSColor.white
@@ -729,7 +729,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         contentView.addSubview(loginCheck)
 
         // Custom dictionary (recognised -> replacement)
-        let dictLabel = NSTextField(labelWithString: "Szótár (felismert → csere):")
+        let dictLabel = NSTextField(labelWithString: "Dictionary (heard → replacement):")
         dictLabel.frame = NSRect(x: 20, y: 304, width: 300, height: 20)
         contentView.addSubview(dictLabel)
 
@@ -740,9 +740,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         table.usesAlternatingRowBackgroundColors = true
         table.rowHeight = 22
         let colFrom = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("from"))
-        colFrom.title = "Felismert"; colFrom.width = 195; colFrom.isEditable = true
+        colFrom.title = "Heard"; colFrom.width = 195; colFrom.isEditable = true
         let colTo = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("to"))
-        colTo.title = "Helyette"; colTo.width = 195
+        colTo.title = "Replacement"; colTo.width = 195
         table.addTableColumn(colFrom)
         table.addTableColumn(colTo)
         table.dataSource = self
@@ -760,7 +760,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         delBtn.bezelStyle = .rounded
         contentView.addSubview(delBtn)
 
-        let dictHint = NSTextField(labelWithString: "A „Helyette” oszlop a felismerést is pontosítja. \\n = új sor.")
+        let dictHint = NSTextField(labelWithString: "The Replacement column also improves recognition. \\n = newline.")
         dictHint.frame = NSRect(x: 100, y: 74, width: 330, height: 18)
         dictHint.font = NSFont.systemFont(ofSize: 10)
         dictHint.textColor = .tertiaryLabelColor
@@ -882,7 +882,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
             field.font = NSFont.systemFont(ofSize: 12)
             field.lineBreakMode = .byTruncatingTail
             field.delegate = self
-            field.placeholderString = id.rawValue == "from" ? "felismert szó" : "csere (\\n = új sor)"
+            field.placeholderString = id.rawValue == "from" ? "heard word" : "replacement (\\n = newline)"
         }
         field.stringValue = replacements[row][id.rawValue] ?? ""
         return field
