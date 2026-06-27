@@ -12,17 +12,26 @@ A simple menu bar app for voice dictation using OpenAI Whisper (local, offline).
 
 ## macOS
 
+### What's new in 1.3.0
+
+- ⚡ **Warm transcription server** — the Whisper model stays loaded in a background `whisper-server`, so each dictation is a fast local call (~0.5s) instead of reloading the 1.5–1.6 GB model on every utterance
+- 📊 **Live mic-level HUD** while recording, which warns ("No audio input?") if the microphone stays silent
+- 📖 **Custom dictionary** — an editable *Heard → Replacement* table that fixes names/jargon in the transcript and also biases recognition
+
 ### Features
 
 - 🎤 Global hotkey (⌃⌥D) to start/stop recording
+- ⚡ Fast transcription via a warm whisper-server (model stays loaded — no per-dictation reload), with automatic fallback to `whisper-cli`
+- 📊 Live mic-level meter while recording, with a "no audio input" warning
+- 📖 Custom dictionary (heard → replacement) that also biases recognition
 - 🔒 Fully offline - uses local Whisper model
-- ⚡ Automatic paste into any focused app
+- ⌨️ Automatic paste into any focused app
 - 📋 Clipboard preservation - your copied content is restored after paste
 - ⚙️ Settings window with model selection dropdown
 - 📥 Built-in model downloader with progress indicator
 - 🚀 Launch at login support
 - 🔊 Sound feedback (optional)
-- 📦 Self-contained - whisper-cli bundled in app
+- 📦 Self-contained - whisper-cli and whisper-server bundled in the app
 
 ### Requirements
 
@@ -75,6 +84,7 @@ make install
 Click the menu bar icon → Settings to configure:
 - **Language**: Auto-detect or 31 supported languages
 - **Model**: Select from installed models or download new ones
+- **Dictionary**: Add *Heard → Replacement* pairs to fix names/jargon (use `\n` for a newline); the replacement terms also improve recognition
 - **Sound feedback**: Toggle audio feedback on/off
 - **Launch at login**: Start automatically when you log in
 
@@ -92,6 +102,8 @@ Download models directly from the app or manually:
 | Large v3 | 3.1 GB | ~8 sec | Maximum | Difficult audio, max accuracy |
 
 Models are stored in `~/.whisper-models/`
+
+> With the warm server (1.3.0+), the selected model loads once at startup (a few seconds); after that each dictation skips the reload, so the speeds above are roughly the per-dictation transcription time.
 
 ### Audio Feedback
 
@@ -114,6 +126,7 @@ Grant these in System Settings → Privacy & Security:
 ## Security
 
 - All processing is done locally - no data leaves your device
+- The bundled `whisper-server` is bound to `127.0.0.1` (loopback only) and is never exposed on the network
 - Audio files are stored in private temp directory and deleted after transcription
 - Clipboard is cleared after paste (transcript doesn't remain accessible)
 - Original clipboard content is preserved and restored after paste
