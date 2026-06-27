@@ -10,6 +10,7 @@ struct Defaults {
     static let language = "whisperLanguage"
     static let modelPath = "whisperModelPath"
     static let playSounds = "playSounds"
+    static let replacements = "customReplacements"
 }
 
 // MARK: - Whisper Models
@@ -385,7 +386,7 @@ final class RecordingHUD {
 }
 
 // MARK: - App Delegate
-class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var statusItem: NSStatusItem!
     var audioRecorder: AVAudioRecorder?
     var isRecording = false
@@ -394,6 +395,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     let recordingHUD = RecordingHUD()
     var meterTimer: Timer?
     var silenceStart: Date?
+    weak var dictTable: NSTableView?
 
     // Use private temp directory with unique filename
     var audioFilePath: String {
@@ -414,6 +416,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     var playSounds: Bool {
         get { UserDefaults.standard.object(forKey: Defaults.playSounds) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Defaults.playSounds) }
+    }
+
+    // Custom dictionary: ordered list of ["from": recognised, "to": replacement].
+    var replacements: [[String: String]] {
+        get { (UserDefaults.standard.array(forKey: Defaults.replacements) as? [[String: String]]) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: Defaults.replacements) }
+    }
+
+    // Whisper initial prompt built from the desired ("to") terms, to bias
+    // recognition toward the user's names/jargon. Returns nil if empty.
+    func customPrompt() -> String? {
+        let terms = replacements.compactMap { $0["to"] }
+            .map { $0.replacingOccurrences(of: "\\n", with: " ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        return terms.isEmpty ? nil : terms.joined(separator: ", ")
+    }
+
+    // Apply the dictionary find/replace pairs to a transcript. "\n" in a
+    // replacement becomes a real newline (e.g. spoken-command → line break).
+    func applyReplacements(_ text: String) -> String {
+        var result = text
+        for pair in replacements {
+            guard let from = pair["from"], !from.isEmpty else { continue }
+            let to = (pair["to"] ?? "").replacingOccurrences(of: "\\n", with: "\n")
+            result = result.replacingOccurrences(of: from, with: to, options: [.caseInsensitive])
+        }
+        return result
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -594,7 +624,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
     func createSettingsWindow() -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 280),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 540),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -604,7 +634,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
         let contentView = NSView(frame: window.contentView!.bounds)
 
-        var y: CGFloat = 230
+        var y: CGFloat = 498
         let labelWidth: CGFloat = 120
         let controlX: CGFloat = 140
         let controlWidth: CGFloat = 280
@@ -696,6 +726,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         loginCheck.frame = NSRect(x: controlX, y: y, width: controlWidth, height: 24)
         loginCheck.state = isLaunchAtLoginEnabled() ? .on : .off
         contentView.addSubview(loginCheck)
+
+        // Custom dictionary (recognised -> replacement)
+        let dictLabel = NSTextField(labelWithString: "Szótár (felismert → csere):")
+        dictLabel.frame = NSRect(x: 20, y: 304, width: 300, height: 20)
+        contentView.addSubview(dictLabel)
+
+        let scroll = NSScrollView(frame: NSRect(x: 20, y: 104, width: 410, height: 192))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let table = NSTableView(frame: scroll.bounds)
+        table.usesAlternatingRowBackgroundColors = true
+        table.rowHeight = 22
+        let colFrom = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("from"))
+        colFrom.title = "Felismert"; colFrom.width = 195; colFrom.isEditable = true
+        let colTo = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("to"))
+        colTo.title = "Helyette"; colTo.width = 195; colTo.isEditable = true
+        for col in [colFrom, colTo] {
+            let cell = NSTextFieldCell()
+            cell.isEditable = true
+            cell.isSelectable = true
+            cell.font = NSFont.systemFont(ofSize: 12)
+            cell.lineBreakMode = .byTruncatingTail
+            col.dataCell = cell
+        }
+        table.addTableColumn(colFrom)
+        table.addTableColumn(colTo)
+        table.dataSource = self
+        table.delegate = self
+        scroll.documentView = table
+        contentView.addSubview(scroll)
+        dictTable = table
+
+        let addBtn = NSButton(title: "+", target: self, action: #selector(addReplacement))
+        addBtn.frame = NSRect(x: 20, y: 70, width: 34, height: 26)
+        addBtn.bezelStyle = .rounded
+        contentView.addSubview(addBtn)
+        let delBtn = NSButton(title: "–", target: self, action: #selector(removeReplacement))
+        delBtn.frame = NSRect(x: 56, y: 70, width: 34, height: 26)
+        delBtn.bezelStyle = .rounded
+        contentView.addSubview(delBtn)
+
+        let dictHint = NSTextField(labelWithString: "A „Helyette” oszlop a felismerést is pontosítja. \\n = új sor.")
+        dictHint.frame = NSRect(x: 100, y: 74, width: 330, height: 18)
+        dictHint.font = NSFont.systemFont(ofSize: 10)
+        dictHint.textColor = .tertiaryLabelColor
+        contentView.addSubview(dictHint)
 
         // Models directory hint
         let hintLabel = NSTextField(labelWithString: "Models stored in: ~/.whisper-models/")
@@ -792,6 +868,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
     @objc func launchAtLoginChanged(_ sender: NSButton) {
         setLaunchAtLogin(sender.state == .on)
+    }
+
+    // MARK: - Custom dictionary table (cell-based, editable)
+    func numberOfRows(in tableView: NSTableView) -> Int { replacements.count }
+
+    func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
+        guard row < replacements.count, let id = tableColumn?.identifier.rawValue else { return nil }
+        return replacements[row][id] ?? ""
+    }
+
+    func tableView(_ tableView: NSTableView, setObjectValue object: Any?, for tableColumn: NSTableColumn?, row: Int) {
+        guard row < replacements.count, let id = tableColumn?.identifier.rawValue else { return }
+        var rows = replacements
+        rows[row][id] = (object as? String) ?? ""
+        replacements = rows
+    }
+
+    @objc func addReplacement() {
+        var rows = replacements
+        rows.append(["from": "", "to": ""])
+        replacements = rows
+        dictTable?.reloadData()
+        dictTable?.editColumn(0, row: rows.count - 1, with: nil, select: true)
+    }
+
+    @objc func removeReplacement() {
+        guard let table = dictTable, table.selectedRow >= 0, table.selectedRow < replacements.count else { return }
+        var rows = replacements
+        rows.remove(at: table.selectedRow)
+        replacements = rows
+        table.reloadData()
     }
 
     // MARK: - Launch at Login
@@ -1102,18 +1209,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         }
 
         // Prefer the warm server (~0.5s); fall back to a per-call whisper-cli spawn.
+        let prompt = customPrompt()
         let result: String?
         if let server = whisperServer, server.isReady {
-            result = server.transcribe(wavPath: audioFilePath, language: language, prompt: nil)
+            result = server.transcribe(wavPath: audioFilePath, language: language, prompt: prompt)
         } else {
-            result = transcribeWithCLI()
+            result = transcribeWithCLI(prompt: prompt)
         }
 
         self.cleanupAudioFile()
 
+        let finalText = result.map { applyReplacements($0) }
+
         DispatchQueue.main.async {
-            if let result = result, !result.isEmpty {
-                self.pasteText(result)
+            if let finalText = finalText, !finalText.isEmpty {
+                self.pasteText(finalText)
             } else {
                 self.statusItem.button?.title = "🎤"
                 self.updateStatus("Ready")
@@ -1125,7 +1235,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
 
     // Per-call transcription via whisper-cli (reloads the model every time).
     // Fallback for when the warm server is unavailable.
-    func transcribeWithCLI() -> String? {
+    func transcribeWithCLI(prompt: String? = nil) -> String? {
         guard let whisperPath = findWhisperCLI() else {
             DispatchQueue.main.async {
                 self.statusItem.button?.title = "🎤"
@@ -1142,6 +1252,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         if language.lowercased() != SupportedLanguages.autoDetect {
             args += ["-l", language.lowercased()]
         }
+        if let prompt = prompt, !prompt.isEmpty { args += ["--prompt", prompt] }
         args += ["-f", audioFilePath]
         task.arguments = args
 
