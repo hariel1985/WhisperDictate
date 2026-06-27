@@ -25,6 +25,17 @@ mkdir -p "$FRAMEWORKS_DIR"
 cp "$WHISPER_CLI_REAL" "$MACOS_DIR/whisper-cli"
 chmod +x "$MACOS_DIR/whisper-cli"
 
+# Copy whisper-server (warm, preloaded-model HTTP backend) from the same bin dir
+WHISPER_BIN_DIR=$(dirname "$WHISPER_CLI_REAL")
+WHISPER_SERVER_REAL="$WHISPER_BIN_DIR/whisper-server"
+if [ -f "$WHISPER_SERVER_REAL" ]; then
+    cp "$WHISPER_SERVER_REAL" "$MACOS_DIR/whisper-server"
+    chmod +x "$MACOS_DIR/whisper-server"
+    echo "Copied: whisper-server"
+else
+    echo "Warning: whisper-server not found at $WHISPER_SERVER_REAL"
+fi
+
 # List of dylibs to copy
 DYLIBS=(
     "libwhisper.1.dylib"
@@ -49,9 +60,12 @@ for dylib in "${DYLIBS[@]}"; do
     fi
 done
 
-# Fix dylib paths in whisper-cli
-for dylib in "${DYLIBS[@]}"; do
-    install_name_tool -change "@rpath/$dylib" "@executable_path/../Frameworks/$dylib" "$MACOS_DIR/whisper-cli" 2>/dev/null || true
+# Fix dylib paths in the bundled executables (whisper-cli + whisper-server)
+for exe in whisper-cli whisper-server; do
+    [ -f "$MACOS_DIR/$exe" ] || continue
+    for dylib in "${DYLIBS[@]}"; do
+        install_name_tool -change "@rpath/$dylib" "@executable_path/../Frameworks/$dylib" "$MACOS_DIR/$exe" 2>/dev/null || true
+    done
 done
 
 # Fix dylib paths in each dylib (they reference each other)
@@ -67,8 +81,10 @@ for dylib in "${DYLIBS[@]}"; do
     fi
 done
 
-# Sign everything
-codesign --force --sign - "$MACOS_DIR/whisper-cli" 2>/dev/null || true
+# Sign everything (ad-hoc; the release flow re-signs with Developer ID afterward)
+for exe in whisper-cli whisper-server; do
+    [ -f "$MACOS_DIR/$exe" ] && codesign --force --sign - "$MACOS_DIR/$exe" 2>/dev/null || true
+done
 for dylib in "${DYLIBS[@]}"; do
     codesign --force --sign - "$FRAMEWORKS_DIR/$dylib" 2>/dev/null || true
 done

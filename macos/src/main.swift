@@ -3,6 +3,7 @@ import AVFoundation
 import Carbon.HIToolbox
 import ServiceManagement
 import ApplicationServices
+import Darwin
 
 // MARK: - User Defaults Keys
 struct Defaults {
@@ -150,12 +151,169 @@ struct SupportedLanguages {
     }
 }
 
+// MARK: - Whisper Server (warm, preloaded-model backend)
+// Keeps a whisper-server child process alive with the model already loaded, so
+// each dictation is a fast local HTTP call (~0.5s) instead of a multi-second
+// model + Metal reload on every utterance (what plain whisper-cli does).
+final class WhisperServer {
+    private let serverPath: String
+    private let modelPath: String
+    private let threads: Int
+    private var process: Process?
+    private var stopping = false
+    private(set) var port: Int = 0
+    private(set) var isReady = false
+
+    init(serverPath: String, modelPath: String, threads: Int) {
+        self.serverPath = serverPath
+        self.modelPath = modelPath
+        self.threads = threads
+    }
+
+    func start(onReady: @escaping (Bool) -> Void) {
+        port = WhisperServer.findFreePort()
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: serverPath)
+        task.arguments = [
+            "-m", modelPath,
+            "--host", "127.0.0.1",
+            "--port", String(port),
+            "-t", String(threads),
+            "-nt",   // no timestamps -> plain text response
+            "-sns",  // suppress non-speech tokens -> fewer hallucinations
+        ]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        task.terminationHandler = { [weak self] _ in self?.isReady = false }
+        do {
+            try task.run()
+            process = task
+        } catch {
+            NSLog("WhisperServer: failed to launch: \(error)")
+            onReady(false)
+            return
+        }
+        // Model load can take ~10s (incl. Metal init); poll the port off-thread.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let deadline = Date().addingTimeInterval(120)
+            while Date() < deadline {
+                if self.stopping || !(self.process?.isRunning ?? false) { break }
+                if WhisperServer.canConnect(port: self.port) {
+                    self.isReady = true
+                    onReady(true)
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.3)
+            }
+            onReady(false)
+        }
+    }
+
+    func stop() {
+        stopping = true
+        isReady = false
+        process?.terminationHandler = nil
+        process?.terminate()
+        process = nil
+    }
+
+    // Synchronous transcription via the warm server. Call OFF the main thread.
+    func transcribe(wavPath: String, language: String, prompt: String?) -> String? {
+        guard isReady,
+              let url = URL(string: "http://127.0.0.1:\(port)/inference"),
+              let wavData = try? Data(contentsOf: URL(fileURLWithPath: wavPath)) else { return nil }
+
+        let boundary = "----WhisperDictate\(UInt32.random(in: 0 ... .max))"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 120
+
+        var body = Data()
+        let nl = "\r\n"
+        func raw(_ s: String) { body.append(s.data(using: .utf8)!) }
+        // audio file part
+        raw("--\(boundary)\(nl)")
+        raw("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\(nl)")
+        raw("Content-Type: audio/wav\(nl)\(nl)")
+        body.append(wavData)
+        raw(nl)
+        // text fields
+        func field(_ name: String, _ value: String) {
+            raw("--\(boundary)\(nl)")
+            raw("Content-Disposition: form-data; name=\"\(name)\"\(nl)\(nl)")
+            raw("\(value)\(nl)")
+        }
+        field("response_format", "json")
+        field("temperature", "0")
+        if language.lowercased() != SupportedLanguages.autoDetect { field("language", language.lowercased()) }
+        if let prompt = prompt, !prompt.isEmpty { field("prompt", prompt) }
+        raw("--\(boundary)--\(nl)")
+        req.httpBody = body
+
+        let sem = DispatchSemaphore(value: 0)
+        var result: String?
+        URLSession.shared.dataTask(with: req) { data, _, error in
+            defer { sem.signal() }
+            if let error = error { NSLog("WhisperServer: request error: \(error)"); return }
+            guard let data = data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let text = obj["text"] as? String else { return }
+            result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.resume()
+        sem.wait()
+        return result
+    }
+
+    // MARK: socket helpers (find a free loopback port + readiness probe)
+    static func findFreePort() -> Int {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 { return 8123 }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        addr.sin_port = 0
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0 else { return 8123 }
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(fd, $0, &len)
+            }
+        }
+        return Int(UInt16(bigEndian: addr.sin_port))
+    }
+
+    static func canConnect(port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 { return false }
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = in_port_t(UInt16(port)).bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let r = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        return r == 0
+    }
+}
+
 // MARK: - App Delegate
 class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     var statusItem: NSStatusItem!
     var audioRecorder: AVAudioRecorder?
     var isRecording = false
     var settingsWindowController: NSWindowController?
+    var whisperServer: WhisperServer?
 
     // Use private temp directory with unique filename
     var audioFilePath: String {
@@ -182,14 +340,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         setupStatusItem()
         registerHotkey()
         requestMicrophonePermission()
-        checkAccessibilityPermission()
 
-        // First-run: check if model exists, if not show setup wizard
+        // Start warming the model server BEFORE the (blocking) accessibility
+        // prompt, so the multi-second model load overlaps with the user
+        // granting permissions instead of running after it.
         if !hasAnyModel() {
             showFirstRunWizard()
         } else {
             checkModelExists()
+            startWhisperServer()
         }
+
+        checkAccessibilityPermission()
 
         NSLog("WhisperDictate started. Press ⌃⌥D to toggle recording.")
     }
@@ -287,6 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
             updateStatus("Ready - \(model.name)")
             if playSounds { NSSound(named: "Glass")?.play() }
             NSLog("Model downloaded: \(model.name)")
+            startWhisperServer()
         } catch {
             statusItem.button?.title = "🎤"
             updateStatus("⚠️ Save failed")
@@ -310,6 +473,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        whisperServer?.stop()
         cleanupAudioFile()
     }
 
@@ -487,6 +651,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
             let path = installedModels[index].path
             modelPath = path
             checkModelExists()
+            startWhisperServer()
             NSLog("Model changed to: \(path)")
         }
     }
@@ -749,9 +914,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         return nil
     }
 
+    func findWhisperServer() -> String? {
+        if let bundlePath = Bundle.main.executablePath {
+            let bundled = (bundlePath as NSString).deletingLastPathComponent + "/whisper-server"
+            if FileManager.default.isExecutableFile(atPath: bundled) { return bundled }
+        }
+        let paths = [
+            "/opt/homebrew/bin/whisper-server",
+            "/usr/local/bin/whisper-server",
+            "/opt/local/bin/whisper-server",
+            NSHomeDirectory() + "/bin/whisper-server"
+        ]
+        for path in paths where FileManager.default.isExecutableFile(atPath: path) { return path }
+        return nil
+    }
+
+    // (Re)start the warm whisper-server for the current model. Falls back to
+    // per-call whisper-cli if the server binary is missing or fails to come up.
+    func startWhisperServer() {
+        whisperServer?.stop()
+        whisperServer = nil
+
+        guard let serverPath = findWhisperServer() else {
+            NSLog("whisper-server not found — using per-call whisper-cli")
+            return
+        }
+        guard isValidModelPath(modelPath).valid else { return }
+
+        statusItem.button?.title = "⏳"
+        updateStatus("Loading model…")
+
+        let threads = min(8, max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
+        let server = WhisperServer(serverPath: serverPath, modelPath: modelPath, threads: threads)
+        whisperServer = server
+        server.start { [weak self] ok in
+            DispatchQueue.main.async {
+                guard let self = self, self.whisperServer === server else { return }
+                self.statusItem.button?.title = "🎤"
+                if ok {
+                    self.updateStatus("Ready")
+                    NSLog("whisper-server ready on port \(server.port)")
+                } else {
+                    self.updateStatus("Ready (CLI fallback)")
+                    self.whisperServer = nil
+                    NSLog("whisper-server failed to start — falling back to whisper-cli")
+                }
+            }
+        }
+    }
+
     // MARK: - Transcription
     func transcribe() {
-        // Validate inputs before execution
         let modelValidation = isValidModelPath(modelPath)
         guard modelValidation.valid else {
             DispatchQueue.main.async {
@@ -771,6 +984,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
             return
         }
 
+        // Prefer the warm server (~0.5s); fall back to a per-call whisper-cli spawn.
+        let result: String?
+        if let server = whisperServer, server.isReady {
+            result = server.transcribe(wavPath: audioFilePath, language: language, prompt: nil)
+        } else {
+            result = transcribeWithCLI()
+        }
+
+        self.cleanupAudioFile()
+
+        DispatchQueue.main.async {
+            if let result = result, !result.isEmpty {
+                self.pasteText(result)
+            } else {
+                self.statusItem.button?.title = "🎤"
+                self.updateStatus("Ready")
+                if self.playSounds { NSSound(named: "Basso")?.play() }
+                NSLog("No speech recognized")
+            }
+        }
+    }
+
+    // Per-call transcription via whisper-cli (reloads the model every time).
+    // Fallback for when the warm server is unavailable.
+    func transcribeWithCLI() -> String? {
         guard let whisperPath = findWhisperCLI() else {
             DispatchQueue.main.async {
                 self.statusItem.button?.title = "🎤"
@@ -778,13 +1016,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
                 if self.playSounds { NSSound(named: "Basso")?.play() }
                 NSLog("whisper-cli not found in PATH")
             }
-            return
+            return nil
         }
 
         let task = Process()
         task.executableURL = URL(fileURLWithPath: whisperPath)
-
-        // Build arguments - skip language flag for auto-detect
         var args = ["-m", modelPath]
         if language.lowercased() != SupportedLanguages.autoDetect {
             args += ["-l", language.lowercased()]
@@ -799,45 +1035,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate {
         do {
             try task.run()
             task.waitUntilExit()
-
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let output = String(data: data, encoding: .utf8) ?? ""
-
-            let lines = output.components(separatedBy: "\n")
             var result = ""
-            for line in lines {
-                if line.hasPrefix("[") {
-                    if let range = line.range(of: "]") {
-                        let text = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-                        result += text + " "
-                    }
+            for line in output.components(separatedBy: "\n") where line.hasPrefix("[") {
+                if let range = line.range(of: "]") {
+                    result += String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces) + " "
                 }
             }
-            result = result.trimmingCharacters(in: .whitespaces)
-
-            // Cleanup audio file after transcription
-            self.cleanupAudioFile()
-
-            DispatchQueue.main.async {
-                if !result.isEmpty {
-                    self.pasteText(result)
-                } else {
-                    self.statusItem.button?.title = "🎤"
-                    self.updateStatus("Ready")
-                    if self.playSounds { NSSound(named: "Basso")?.play() }
-                    NSLog("No speech recognized")
-                }
-            }
+            return result.trimmingCharacters(in: .whitespaces)
         } catch {
-            // Cleanup even on error
-            self.cleanupAudioFile()
-
-            DispatchQueue.main.async {
-                self.statusItem.button?.title = "🎤"
-                self.updateStatus("Error")
-                if self.playSounds { NSSound(named: "Basso")?.play() }
-                NSLog("Transcription failed: \(error)")
-            }
+            NSLog("Transcription failed: \(error)")
+            return nil
         }
     }
 
