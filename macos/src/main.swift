@@ -386,7 +386,7 @@ final class RecordingHUD {
 }
 
 // MARK: - App Delegate
-class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, NSTableViewDataSource, NSTableViewDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSWindowDelegate {
     var statusItem: NSStatusItem!
     var audioRecorder: AVAudioRecorder?
     var isRecording = false
@@ -631,6 +631,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         )
         window.title = "WhisperDictate Settings"
         window.center()
+        window.delegate = self
 
         let contentView = NSView(frame: window.contentView!.bounds)
 
@@ -741,15 +742,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         let colFrom = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("from"))
         colFrom.title = "Felismert"; colFrom.width = 195; colFrom.isEditable = true
         let colTo = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("to"))
-        colTo.title = "Helyette"; colTo.width = 195; colTo.isEditable = true
-        for col in [colFrom, colTo] {
-            let cell = NSTextFieldCell()
-            cell.isEditable = true
-            cell.isSelectable = true
-            cell.font = NSFont.systemFont(ofSize: 12)
-            cell.lineBreakMode = .byTruncatingTail
-            col.dataCell = cell
-        }
+        colTo.title = "Helyette"; colTo.width = 195
         table.addTableColumn(colFrom)
         table.addTableColumn(colTo)
         table.dataSource = self
@@ -870,22 +863,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         setLaunchAtLogin(sender.state == .on)
     }
 
-    // MARK: - Custom dictionary table (cell-based, editable)
+    // MARK: - Custom dictionary table (view-based, editable text fields)
     func numberOfRows(in tableView: NSTableView) -> Int { replacements.count }
 
-    func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
-        guard row < replacements.count, let id = tableColumn?.identifier.rawValue else { return nil }
-        return replacements[row][id] ?? ""
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard let column = tableColumn, row < replacements.count else { return nil }
+        let id = column.identifier
+        let field: NSTextField
+        if let reused = tableView.makeView(withIdentifier: id, owner: self) as? NSTextField {
+            field = reused
+        } else {
+            field = NSTextField()
+            field.identifier = id
+            field.isBordered = false
+            field.drawsBackground = false
+            field.isEditable = true
+            field.isSelectable = true
+            field.font = NSFont.systemFont(ofSize: 12)
+            field.lineBreakMode = .byTruncatingTail
+            field.delegate = self
+            field.placeholderString = id.rawValue == "from" ? "felismert szó" : "csere (\\n = új sor)"
+        }
+        field.stringValue = replacements[row][id.rawValue] ?? ""
+        return field
     }
 
-    func tableView(_ tableView: NSTableView, setObjectValue object: Any?, for tableColumn: NSTableColumn?, row: Int) {
-        guard row < replacements.count, let id = tableColumn?.identifier.rawValue else { return }
+    // Commit an edited cell back into the model (fires on Enter, Tab, focus loss).
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard let field = obj.object as? NSTextField, let table = dictTable else { return }
+        let row = table.row(for: field), col = table.column(for: field)
+        guard row >= 0, row < replacements.count, col >= 0, col < table.tableColumns.count else { return }
+        let id = table.tableColumns[col].identifier.rawValue
         var rows = replacements
-        rows[row][id] = (object as? String) ?? ""
+        rows[row][id] = field.stringValue
         replacements = rows
     }
 
     @objc func addReplacement() {
+        pruneEmptyReplacements()
         var rows = replacements
         rows.append(["from": "", "to": ""])
         replacements = rows
@@ -899,6 +914,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, URLSessionDownloadDelegate, 
         rows.remove(at: table.selectedRow)
         replacements = rows
         table.reloadData()
+    }
+
+    // Drop rows where both columns are blank so empty rows aren't persisted.
+    func pruneEmptyReplacements() {
+        let cleaned = replacements.filter {
+            !(($0["from"] ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+              && ($0["to"] ?? "").trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        if cleaned.count != replacements.count { replacements = cleaned }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        pruneEmptyReplacements()
     }
 
     // MARK: - Launch at Login
